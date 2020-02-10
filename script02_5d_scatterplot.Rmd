@@ -1,0 +1,126 @@
+---
+title: "script02_scatterplot"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+plot.data = read.table('result_hc2/feature_beta.csv', sep = ',', header = T)
+
+# select brain regions with Rsquared larger than .1.
+plot.data=plot.data[plot.data$Rsquare>.15, ]
+
+feature.name = c('age', 'age2', 'gender', 'gender_by_age', 'gender_by_age2') 
+colnames(plot.data)[3:7] = feature.name
+```
+
+```{r}
+#pkgs <- c("factoextra",  "NbClust")
+#install.packages(pkgs)
+
+library(factoextra)
+library(NbClust)
+
+# Elbow method
+plot.data$age = abs(plot.data$age)
+plot.data$age2 = abs(plot.data$age2)
+
+# normalize features:
+plot.data[, feature.name] <- scale(plot.data[, feature.name])
+
+fviz_nbclust(plot.data, kmeans, method = "wss") +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+# Silhouette method
+fviz_nbclust(plot.data, kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+
+# Gap statistic
+# nboot = 50 to keep the function speedy. 
+# recommended value: nboot= 500 for your analysis.
+# Use verbose = FALSE to hide computing progression.
+set.seed(123)
+fviz_nbclust(plot.data, kmeans, nstart = 25,  method = "gap_stat", nboot = 50)+
+  labs(subtitle = "Gap statistic method")
+
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+
+```{r}
+
+
+library(dplyr)
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+    usr <- par("usr")
+    on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y, use = "complete.obs"))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste(prefix, txt, sep = "")
+    if (missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex =  cex.cor * (1 + r) / 2)
+}
+
+panel.hist <- function(x, ...) {
+    usr <- par("usr")
+    on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks
+    nB <- length(breaks)
+    y <- h$counts
+    y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "white", ...)
+}
+
+#plot.new()
+plot.data %>%
+    select(-c(X, modality, Rsquare)) %>%
+    pairs(
+        upper.panel = panel.cor,
+        diag.panel  = panel.hist,
+        lower.panel = panel.smooth
+        )
+```
+
+
+
+```{r pressure, echo=FALSE}
+library(scatterplot3d)
+library(RColorBrewer)
+
+plot.data$age = abs(plot.data$age)
+plot.data$age2 = abs(plot.data$age2)
+
+# get colors for labeling the points
+plotvar <- plot.data$gender_by_age # pick a variable to plot
+nclr <- 8 # number of colors
+plotclr <- brewer.pal(nclr,"Spectral") # get the colors
+colornum <- cut(rank(plotvar), nclr, labels=FALSE)
+colcode <- plotclr[colornum] # assign color
+
+# scatter plot
+#plot.new()
+plot.angle <- 75
+scatterplot3d(plot.data$age, plot.data$age2, plot.data$gender, type="h", angle=plot.angle, color=colcode, pch=20, cex.symbols=2, 
+             col.axis="gray", col.grid="gray")
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

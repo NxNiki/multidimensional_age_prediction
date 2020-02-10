@@ -1,0 +1,209 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+```{r}
+rm(list = ls())
+
+library(MASS)
+if (.Platform$OS.type == 'windows'){
+  setwd("C:/Users/Xin/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+} else{
+  setwd("~/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+}
+
+scale.0.1 = function(dat) {
+    # the output will be coerced to matrix.
+    
+    dat = as.matrix(dat)
+    
+    mins = apply(dat, 2, min)
+    maxs = apply(dat, 2, max)
+    
+    scaled.dat = scale(dat, center = mins, scale = maxs - mins)
+    return(scaled.dat)
+}
+
+step.direction = 'backward'
+
+```
+
+```{r}
+# read age prediction and behavioral data:
+
+scatter_data = read.csv('out03_age_prediction/out04_scatter_data_cluster_gmm_eve3_fit_brain_age.csv')
+scatter_subid = unique(scatter_data[,'SUBJID'])
+
+behav_data = read.csv('result_robustreg_behav_hc2/out01_behav_hc2.csv')
+behav_data$X=NULL
+behav_data$age_at_cnb = NULL
+behav_data = behav_data[behav_data$SUBJID %in% scatter_subid,]
+
+```
+
+
+
+```{r}
+
+# stepwise regression with behavioral scores to predict brain age:
+
+cluster_list = unique(scatter_data$cluster)
+
+result.list = vector(mode = "list", length = length(cluster_list)+1)
+names(result.list) = c(cluster_list, 'chronological.age')
+# potential bug here, the 3rd value in cluster_list which should be 'all' is onverted to '4'
+
+
+for (i in 1:length(cluster_list)){
+    
+    print(i)
+    scatter_data_i = scatter_data[scatter_data$cluster==cluster_list[i], c('SUBJID', 'brain.age', 'Sex')]
+    data.behav = merge(scatter_data_i, behav_data, on = 'SUBJID')
+    data.behav$SUBJID = NULL
+    
+    data.behav = data.behav[complete.cases(data.behav), ]
+    binary.col = which(colnames(data.behav)=='Sex') 
+    data.behav[, -binary.col] = scale.0.1(data.behav[, -binary.col])
+    
+    # Fit the full model 
+    full.model <- lm(brain.age ~., data = data.behav)
+    
+    # Stepwise regression model
+    step.model <- stepAIC(full.model, direction = step.direction, 
+                        trace = FALSE)
+    step.summary = summary(step.model)
+    
+    result = step.summary$coefficients[, c(1,4)]
+    result = rbind(result, as.matrix(t(c(step.summary$adj.r.squared, ''))))
+    row.names(result)[nrow(result)] = 'Adjusted Rsquared'
+    
+    result.list[[i]] =  as.data.frame(result)
+}
+
+
+# predict chronolgical age:
+
+scatter_data_i = scatter_data[scatter_data$cluster==cluster_list[i], c('SUBJID', 'chronological.age', 'Sex')]
+data.behav = merge(scatter_data_i, behav_data, on = 'SUBJID')
+data.behav$SUBJID = NULL
+
+data.behav = data.behav[complete.cases(data.behav), ]
+binary.col = which(colnames(data.behav)=='Sex') 
+data.behav[, -binary.col] = scale.0.1(data.behav[, -binary.col])
+
+# Fit the full model 
+full.model <- lm(chronological.age ~., data = data.behav)
+
+# Stepwise regression model
+step.model <- stepAIC(full.model, direction = step.direction, 
+                    trace = FALSE)
+step.summary = summary(step.model)
+
+result = step.summary$coefficients[, c(1,4)]
+result = rbind(result, as.matrix(t(c(step.summary$adj.r.squared, ''))))
+row.names(result)[nrow(result)] = 'Adjusted Rsquared'
+
+result.list[[i+1]] =  as.data.frame(result)
+
+
+
+```
+
+save results:
+
+```{r}
+
+library(plyr)
+
+result.list2 = result.list
+
+for(i in 1:length(result.list)){
+  colnames(result.list2[[i]]) <- paste0(names(result.list)[i], "_", colnames(result.list[[i]]) )
+  result.list2[[i]]$ROWNAMES  <- rownames(result.list[[i]])
+}
+ 
+out <- join_all( result.list2, by="ROWNAMES", type="full" )
+rownames(out) <- out$ROWNAMES; 
+out$ROWNAMES <- NULL
+
+idx.rsquare = which(rownames(out)=='Adjusted Rsquared')
+out = rbind(out[-idx.rsquare,], out[idx.rsquare,])
+print(out)
+
+write.csv(out, 'out03_age_prediction/stepwise_regression_backward_hc_brain.age.csv')
+
+```
+```{r}
+
+# stepwise regression with behavioral scores to predict brain age:
+
+cluster_list = unique(scatter_data$cluster)
+
+result.list = vector(mode = "list", length = length(cluster_list))
+names(result.list) = cluster_list
+
+for (i in 1:length(cluster_list)){
+    
+    print(i)
+    scatter_data_i = scatter_data[scatter_data$cluster==cluster_list[i], c('SUBJID', 'brain.age', 'Sex' , 'age.gap.corr')]
+    data.behav = merge(scatter_data_i, behav_data, on = 'SUBJID')
+    data.behav$SUBJID = NULL
+    
+    data.behav = data.behav[complete.cases(data.behav), ]
+    binary.col = which(colnames(data.behav)=='Sex') 
+    data.behav[, -binary.col] = scale.0.1(data.behav[, -binary.col])
+    
+    # Fit the full model 
+    full.model <- lm(age.gap.corr ~., data = data.behav)
+    
+    # Stepwise regression model
+    step.model <- stepAIC(full.model, direction = step.direction, 
+                        trace = FALSE)
+    step.summary = summary(step.model)
+    
+    result = step.summary$coefficients[, c(1,4)]
+    result = rbind(result, as.matrix(t(c(step.summary$adj.r.squared, ''))))
+    row.names(result)[nrow(result)] = 'Adjusted Rsquared'
+    
+    result.list[[i]] =  as.data.frame(result)
+}
+
+
+
+```
+
+save results:
+
+```{r}
+
+library(plyr)
+
+result.list2 = result.list
+
+for(i in 1:length(result.list)){
+  colnames(result.list2[[i]]) <- paste0(names(result.list)[i], "_", colnames(result.list[[i]]) )
+  result.list2[[i]]$ROWNAMES  <- rownames(result.list[[i]])
+}
+ 
+out <- join_all( result.list2, by="ROWNAMES", type="full" )
+rownames(out) <- out$ROWNAMES; 
+out$ROWNAMES <- NULL
+
+idx.rsquare = which(rownames(out)=='Adjusted Rsquared')
+out = rbind(out[-idx.rsquare,], out[idx.rsquare,])
+print(out)
+
+write.csv(out, 'out03_age_prediction/stepwise_regression_backward_hc_brain.age.gap.csv')
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
