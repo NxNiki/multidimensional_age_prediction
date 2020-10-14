@@ -1,0 +1,626 @@
+---
+title: "script01_robust_regression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+```{r}
+rm(list = ls())
+setwd("C:/Users/Xin/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+#setwd("C:/Users/niuxi/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+
+
+# fa features have been reveresed in the python codes.
+multimodal.features = read.csv('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_hc.csv')
+multimodal.features = multimodal.features[,-1]
+
+result = read.csv('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_robust_regression_coefs_empty.csv')
+
+```
+
+
+```{r}
+
+rsquared = function (actual, preds){
+  
+  rss <- sum((preds - actual) ^ 2)  ## residual sum of squares
+  tss <- sum((actual - mean(actual)) ^ 2)  ## total sum of squares
+  rsq <- 1 - rss/tss
+  
+  return(rsq)
+  
+}
+
+
+```
+
+
+set independent test set to examine the MAE of prediction:
+
+
+# OLS:
+
+```{r}
+library(MASS)
+
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, 2))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+
+for (i_feature in 1: num_features){
+
+feature = multimodal.features[,i_feature+3]
+
+data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+data_train = data[train_index,]
+data_test = data[test_index,]
+y_test = data[test_index, 1]
+
+mod = lm(feature ~ ., data = data_train)
+y_pred = predict(mod, data_test)
+
+#MAE = mean(abs(y_test - y_pred))
+#prediction_result[i_feature, 2] = MAE
+
+rsq = rsquared(y_test, y_pred)
+prediction_result[i_feature, 2] = rsq
+
+
+}
+  
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_mae_OLS.csv'),
+          row.names = F)
+
+prediction_result_ols = prediction_result
+
+```
+
+
+# huber regression:
+```{r}
+library(MASS)
+
+
+#k_list = c(seq(1, 5, .1), 1.345) # 1.345 is the default k value. 
+k_list = seq(1, 5, length.out = 30)
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, length(k_list)+1))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+ik = 1
+
+for (k in k_list){
+  
+  colnames(prediction_result)[ik+1] = paste0('k', toString(k))
+  
+    for (i_feature in 1: num_features){
+    
+    feature = multimodal.features[,i_feature+3]
+    data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+    data_train = data[train_index,]
+    data_test = data[test_index,]
+    y_test = data[test_index, 1]
+    
+    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.huber, k=k, method = "M", maxit=200)
+    #rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.huber, k=k, method = "MM", maxit=200)
+    y_pred = predict(rr.huber, data_test)
+    
+    #MAE = mean(abs(y_test - y_pred))
+    #prediction_result[i_feature, ik+1] = MAE
+    
+    rsq = rsquared(y_test, y_pred)
+    prediction_result[i_feature, ik+1] = rsq
+    
+    }
+  
+  ik = ik+1
+
+}
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'), row.names = F)
+#write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_MM.csv'), row.names = F)
+
+prediction_result_huber = prediction_result
+
+
+```
+
+show mae for all features:
+```{r}
+
+#prediction_result
+
+```
+
+show averaged MAE/Rsquared across features:
+
+based on the definition of weight function of huber regression, samples with standared error larger than K will be weighted by k/abs(err), otherwise, the weight is 1. So a large k corresponds to OLS (all samples are weighted by 1)
+
+https://stats.idre.ucla.edu/r/dae/robust-regression/
+
+```{r}
+prediction_result_huber_M = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'))
+prediction_result_huber_MM = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_MM.csv'))
+
+plot(k_list, colMeans(prediction_result_huber_M[,-1]), pch="*", col="blue", ylim = c(0.1, 0.159))
+#points(k_list, colMeans(prediction_result_huber_MM[,-1]), pch="*", col="dark red")
+lines(k_list, rep(mean(prediction_result_ols[,2]), length(k_list)), col="dark red")
+
+```
+
+
+# rsquared for each brain imaging feature (each color represents a brain feature)
+```{r}
+library(ggplot2)
+library(reshape2)
+
+colnames(prediction_result_huber_MM) = c('feature', k_list)
+
+plot_data = melt(data = prediction_result_huber_MM, id.vars = "feature", measure.vars = colnames(prediction_result_huber_MM)[-1])
+
+ggplot(plot_data, aes(x=variable, y=value, group = feature, color = feature)) + 
+  geom_line(size=.2) + theme(legend.position = "none") +
+  geom_point(size=1)
+
+```
+
+
+
+```{r}
+colnames(prediction_result_huber_M) = c('feature', k_list)
+
+plot_data = melt(data = prediction_result_huber_M, id.vars = "feature", measure.vars = colnames(prediction_result_huber_M)[-1])
+
+ggplot(plot_data, aes(x=variable, y=value, group = feature, color = feature)) + 
+  geom_line(size=.2) + theme(legend.position = "none") +
+  geom_point(size=1)
+
+```
+
+##compared best rsquare between huber M and huber MM for each feature:
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+M_max = apply(prediction_result_huber_M[,-1], 1, max)
+MM_max = apply(prediction_result_huber_MM[,-1], 1, max)
+
+data_merge = as.data.frame(cbind(prediction_result_huber_M[,1], M_max, MM_max))
+
+# cbind convert numeric to character, so we convert to numeric!
+data_merge[,c(2,3)] = sapply(data_merge[, c(2,3)], as.numeric)
+
+colnames(data_merge) = c('feature', 'M', 'MM')
+data_merge[,1] = 1:dim(data_merge)[1]
+
+plot_data = melt(data = data_merge, id.vars = "feature", measure.vars = colnames(data_merge)[-1])
+
+#ggplot(plot_data, aes(x=feature, y=value, group = variable, color = variable)) + 
+#  geom_line(size=.2) + theme(legend.position = "bottom") +
+#  geom_point(size=1)
+
+
+ggplot(plot_data, aes(x = variable, y = value)) +   
+  geom_line(aes(group = variable), size = 0.5, alpha = 0.7) +  
+  geom_boxplot(aes(fill = variable), alpha = 0.5)+
+  geom_jitter(width=0.1,alpha=0.2)
+
+```
+
+# distribution of the best k values for all features:
+```{r}
+best.k = k_list[apply(prediction_result_huber_M[,-1], 1, which.max)]
+hist(best.k, breaks = k_list)
+
+```
+
+# bisquare regression:
+
+With bisquare weighting, all cases with a non-zero residual get down-weighted at least a little.
+
+```{r}
+library(MASS)
+
+
+#k_list = seq(2, 10, .1) 
+c_list = seq(1, 5, length.out = 30)
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, length(c_list)+1))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+ik = 1
+
+for (k in c_list){
+  
+    colnames(prediction_result)[ik+1] = paste0('c', toString(k))
+  
+    for (i_feature in 1: num_features){
+    
+    feature = multimodal.features[,i_feature+3]
+    
+    data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+    data_train = data[train_index,]
+    data_test = data[test_index,]
+    y_test = data[test_index, 1]
+    
+    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.huber, k=k, method = "M", maxit=2000)
+    #rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.huber, k=k, method = "MM", maxit=2000)
+    y_pred = predict(rr.huber, data_test)
+    
+    #MAE = mean(abs(y_test - y_pred))
+    #prediction_result[i_feature, ik+1] = MAE
+    
+    rsq = rsquared(y_test, y_pred)
+    prediction_result[i_feature, ik+1] = rsq
+    
+    }
+  
+  ik = ik+1
+
+}
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_M.csv'), row.names = F)
+#write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_MM.csv'), row.names = F)
+
+prediction_result_bisquare = prediction_result
+```
+
+show mae for all features:
+```{r}
+
+#prediction_result
+
+```
+
+show averaged MAE across features:
+
+```{r}
+
+prediction_result_huber_M = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'))
+prediction_result_bisquare = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_M.csv'))
+
+plot(1:length(k_list), colMeans(prediction_result_huber_M[,-1]), pch="*", col="blue" ,ylim = c(0.15, 0.16))
+points(1:length(k_list), colMeans(prediction_result_bisquare[,-1]), pch="*", col="green")
+lines(1:length(k_list), rep(mean(prediction_result_ols[,2]), length(k_list)), col="dark red",pch="+")
+
+```
+
+```{r}
+
+best.k = c_list[apply(prediction_result_bisquare[,-1], 1, which.max)]
+hist(best.k, breaks = c_list)
+
+```
+
+# hampel regression:
+
+as hampel has 3 tuning parameters, we will tune them one by one with others set to default.
+
+tunning on a:
+
+```{r}
+library(MASS)
+
+
+a_list = seq(1, 5, length.out = 30) 
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, length(a_list)+1))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+ik = 1
+
+for (k in a_list){
+  
+  colnames(prediction_result)[ik+1] = paste0('c', toString(k))
+  
+    for (i_feature in 1: num_features){
+    
+    feature = multimodal.features[,i_feature+3]
+    
+    feature = multimodal.features[,i_feature+3]
+    data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+    data_train = data[train_index,]
+    data_test = data[test_index,]
+    y_test = data[test_index, 1]
+    
+    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.hampel, a=k, method = "M", maxit=2000)
+    y_pred = predict(rr.huber, data_test)
+    
+    #MAE = mean(abs(y_test - y_pred))
+    #prediction_result[i_feature, ik+1] = MAE
+    
+    rsq = rsquared(y_test, y_pred)
+    prediction_result[i_feature, ik+1] = rsq
+    
+    }
+  
+  ik = ik+1
+
+}
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_a_M.csv'),
+          row.names = F)
+
+
+```
+
+
+
+show averaged MAE across features tunning on a:
+
+based on the definition of hampel function, a large a corresponds to OLS
+
+
+```{r}
+
+prediction_result_huber_M = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'))
+prediction_result_bisquare = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_M.csv'))
+prediction_result_hampela = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_a_M.csv'))
+
+plot(1:length(k_list), colMeans(prediction_result_huber_M[,-1]), pch="*", col="blue", ylim = c(0.15, 0.16))
+points(1:length(c_list), colMeans(prediction_result_bisquare[,-1]), pch="*", col="green")
+points(1:length(a_list), colMeans(prediction_result_hampela[,-1]), pch="*", col="yellow")
+lines(1:length(k_list), rep(mean(prediction_result_ols[,2]), length(k_list)), col="dark red",pch="+")
+
+which.max(colMeans(prediction_result_hampela[,-1]))
+
+```
+
+```{r}
+
+best.k = a_list[apply(prediction_result_hampela[,-1], 1, which.max)]
+hist(best.k, breaks = a_list)
+
+```
+
+
+tunning on b:
+
+```{r}
+library(MASS)
+
+
+#k_list = seq(2, 10, .2) 
+b_list = seq(2, 10, length.out = 30) 
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, length(b_list)+1))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+ik = 1
+
+for (k in b_list){
+  
+  colnames(prediction_result)[ik+1] = paste0('c', toString(k))
+  
+    for (i_feature in 1: num_features){
+    
+    feature = multimodal.features[,i_feature+3]
+    
+    feature = multimodal.features[,i_feature+3]
+    data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+    data_train = data[train_index,]
+    data_test = data[test_index,]
+    y_test = data[test_index, 1]
+    
+    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.hampel, a = 1.41,b =k, method = "M", maxit=2000)
+    y_pred = predict(rr.huber, data_test)
+    
+    #MAE = mean(abs(y_test - y_pred))
+    #prediction_result[i_feature, ik+1] = MAE
+    
+    rsq = rsquared(y_test, y_pred)
+    prediction_result[i_feature, ik+1] = rsq
+    
+    }
+  
+  ik = ik+1
+
+}
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_b_M.csv'),
+          row.names = F)
+
+```
+
+
+
+show averaged MAE across features tunning on b:
+
+based on the definition of hampel function, a large b corresponds to huber (with a works similarly to k in huber):
+
+```{r}
+
+prediction_result_huber_M = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'))
+prediction_result_bisquare = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_M.csv'))
+prediction_result_hampela = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_a_M.csv'))
+prediction_result_hampelb = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_b_M.csv'))
+
+plot(1:length(k_list), colMeans(prediction_result_huber_M[,-1]), pch="*", col="blue", ylim = c(0.15, 0.16))
+points(1:length(c_list), colMeans(prediction_result_bisquare[,-1]), pch="*", col="green")
+points(1:length(a_list), colMeans(prediction_result_hampela[,-1]), pch="*", col="yellow")
+points(1:length(b_list), colMeans(prediction_result_hampelb[,-1]), pch="*", col="red")
+lines(1:length(k_list), rep(mean(prediction_result_ols[,2]), length(k_list)), col="dark red",pch="+")
+
+which.max(colMeans(prediction_result_hampelb[,-1]))
+
+```
+
+
+```{r}
+
+best.k = b_list[apply(prediction_result_hampelb[,-1], 1, which.max)]
+hist(best.k, breaks = b_list)
+
+```
+
+
+tunning on c:
+
+```{r}
+library(MASS)
+
+
+c2_list = seq(4, 15, length.out = 30) 
+num_features = dim(multimodal.features)[2]-3
+
+prediction_result = as.data.frame(matrix(NA, num_features, length(c2_list)+1))
+prediction_result[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+# split the data into train and test set to examine the MAE of regression:
+#set.seed(111)
+set.seed(222)
+#cv.k = createFolds(y, k, list = F)
+train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+test_index <- setdiff(1:nrow(multimodal.features), train_index)
+
+ik = 1
+
+for (k in c2_list){
+  
+  colnames(prediction_result)[ik+1] = paste0('c', toString(k))
+  
+    for (i_feature in 1: num_features){
+    
+    feature = multimodal.features[,i_feature+3]
+    
+    feature = multimodal.features[,i_feature+3]
+    data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+    data_train = data[train_index,]
+    data_test = data[test_index,]
+    y_test = data[test_index, 1]
+    
+    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.hampel, a = 1.41,b = 2.27, c=k, method = "M", maxit=200)
+    y_pred = predict(rr.huber, data_test)
+
+    #MAE = mean(abs(y_test - y_pred))
+    #prediction_result[i_feature, ik+1] = MAE
+    
+    rsq = rsquared(y_test, y_pred)
+    prediction_result[i_feature, ik+1] = rsq
+    
+    }
+  
+  ik = ik+1
+
+}
+
+write.csv(prediction_result, paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_c_M.csv'),
+          row.names = F)
+
+```
+
+
+
+show averaged MAE across features tunning on c:
+
+with a and b fixed, a large c will also make hampel function similar to huber regression:
+
+```{r}
+
+
+prediction_result_huber_M = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_huber_M.csv'))
+prediction_result_bisquare = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_bisquare_M.csv'))
+prediction_result_hampela = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_a_M.csv'))
+prediction_result_hampelb = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_b_M.csv'))
+prediction_result_hampelc = read.csv(paste0('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_feature_rsquared_hampel_c_M.csv'))
+
+plot(1:length(k_list), colMeans(prediction_result_huber_M[,-1]), pch="*", col="blue",  ylim = c(0.15, 0.16))
+points(1:length(c_list), colMeans(prediction_result_bisquare[,-1]), pch="*", col="green")
+points(1:length(a_list), colMeans(prediction_result_hampela[,-1]), pch="*", col="yellow")
+points(1:length(b_list), colMeans(prediction_result_hampelb[,-1]), pch="+", col="blue")
+points(1:length(c2_list), colMeans(prediction_result_hampelc[,-1]), pch="+", col="red")
+lines(1:length(k_list), rep(mean(prediction_result_ols[,2]), length(k_list)), col="dark red",pch="+")
+
+which.max(colMeans(prediction_result_hampelc[,-1]))
+
+```
+
+```{r}
+
+best.k = c2_list[apply(prediction_result_hampelc[,-1], 1, which.max)]
+hist(best.k, breaks = c2_list)
+
+```

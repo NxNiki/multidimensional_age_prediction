@@ -1,0 +1,318 @@
+---
+title: "script_02_gmm_cluster"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+mclust model:
+
+"EII"
+spherical, equal volume
+
+"VII"
+spherical, unequal volume
+
+"EEI"
+diagonal, equal volume and shape
+
+"VEI"
+diagonal, varying volume, equal shape
+
+"EVI"
+diagonal, equal volume, varying shape
+
+"VVI"
+diagonal, varying volume and shape
+
+"EEE"
+ellipsoidal, equal volume, shape, and orientation
+
+"EVE"
+ellipsoidal, equal volume and orientation (*)
+
+"VEE"
+ellipsoidal, equal shape and orientation (*)
+
+"VVE"
+ellipsoidal, equal orientation (*)
+
+"EEV"
+ellipsoidal, equal volume and equal shape
+
+"VEV"
+ellipsoidal, equal shape
+
+"EVV"
+ellipsoidal, equal volume (*)
+
+"VVV"
+ellipsoidal, varying volume, shape, and orientation
+
+```{r cars}
+library(mclust)
+library(ggplot2)
+library(reshape2)
+
+# first thresh indicates the threshold of RANSCA in previous step.
+# 2nd thresh indicates threshold for Rsquared in this script.
+input_dir = "out01_robustreg_behav_hc2_stdz_age_reverse_fa_thresh"
+out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_thresh0_thresh0.02"
+#out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_thresh0"
+
+#input_dir = "out01_robustreg_behav_hc2_stdz_age_reverse_fa_allsubjects"
+#out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_allsubjects_thresh0.02"
+
+dir.create(file.path(out_dir), showWarnings = FALSE)
+
+#### read combined behav and brain coefs with common hc subjects:
+coefs_data = read.csv(paste0(input_dir, '/out01_behav_feature_beta_ransac_lr_thresh0.csv'), header = T)
+#coefs_data = read.csv(paste0(input_dir, '/out01_behav_feature_beta_ransac_lr_thresh1.csv'), header = T)
+#coefs_data = read.csv(paste0(input_dir, '/out01_behav_feature_beta_ransac_lr_thresh2.csv'), header = T)
+
+colnames(coefs_data)[1] = 'feature'
+#coefs_data_raw = coefs_data
+#coefs_data[,c('age','age..2.')] = abs(coefs_data[c('age','age..2.')])
+
+rsquare_thresh = 0.02
+coefs_data[coefs_data[, 'Rsquare']<rsquare_thresh, 'rsquare_thresh'] = F
+coefs_data[coefs_data[, 'Rsquare']>=rsquare_thresh, 'rsquare_thresh'] = T
+
+
+columns = c('age', 'age..2.', 'age.gender', 'age..2..gender')
+
+cluster_rows = (coefs_data[,'rsquare_thresh']==T) & (coefs_data[,'modality']!='behav')
+#X = coefs_data[cluster_rows, columns]
+X = scale(coefs_data[cluster_rows, columns])
+
+
+#cluster_rows_behav = (coefs_data[,'rsquare_thresh']==T)
+#X_behav = coefs_data[cluster_rows_behav, columns]
+
+```
+
+## explore best number of clusters: kmeans
+
+```{r}
+
+#install.packages("NbClust",dependencies = TRUE)
+#library(NbClust)
+#nb <- NbClust(X, diss=NULL, distance = "euclidean", 
+#              min.nc=2, max.nc=5, method = "kmeans", 
+#              index = "all", alphaBeale = 0.1)
+#hist(nb$Best.nc[1,], breaks = max(na.omit(nb$Best.nc[1,])))
+
+```
+
+## explore best number of clusters: sli score for Kmeans
+
+```{r}
+
+#library(cluster)
+#
+#max_cluster = 10
+#
+#sil <- data.frame(num_cluster=2:max_cluster, sil_score = rep(NA, max_cluster-1))
+#
+#x_dist = dist(X)
+#
+#idx = 1    
+#for (icluster in 2:max_cluster) {
+#
+#    mod <- kmeans(X, icluster)
+#    cluster_idx = mod$cluster
+#
+#    if (is.null(cluster_idx)){
+#        sil[idx, model] = NA
+#        print('na returned')
+#    }else{
+#        sil.out = silhouette(cluster_idx, x_dist)
+#        sil[idx,2] = mean(sil.out[,3])
+#    }
+#    
+#    idx = idx+1
+#}
+#    
+#print(sil)
+#
+##plot_data = melt(sil, id.var = c('num_cluster'), value.name = 'sil_score')
+#ggplot(data=sil, aes(x=num_cluster, y=sil_score))+
+#  geom_line()+
+#  geom_point()
+#
+```
+
+## ICL
+
+```{r}
+
+ICL <- mclustICL(X)
+summary(ICL)
+plot(ICL)
+
+```
+
+
+
+
+
+```{r}
+
+#BIC <- mclustBIC(X)
+
+BIC <- mclustBIC(X, modelNames = c("EVE", "EEE", "VVV", "EVV", "EEI", "VEI", "EVI", "VVI", "EEV", "VEV", "EII"))
+#BIC <- mclustBIC(X)
+plot(BIC)
+summary(BIC)
+
+```
+
+
+```{r}
+library(cluster)
+library(ggplot2)
+library(reshape2)
+
+max_cluster = 7
+
+#model_list = c('EVE', 'EEE', 'VVV', 'EVV', 'VVI', 'VEI')
+model_list = c("EVE", "EEE", "VVV", "EVV", "EEI", "VEI", "EVI", "VVI", "EEV", "VEV", "EII")
+
+sil <- data.frame(num_cluster=2:max_cluster)
+cluster.idx.list = list()
+
+x_dist = dist(X)
+for (model in model_list){
+    
+    sil[, model] = rep(NA, max_cluster-1)
+    cluster_idx = matrix(NA, dim(X)[1], max_cluster-1)
+    
+    idx = 1
+    for (icluster in 2:max_cluster) {
+
+        mod <- Mclust(X, modelNames = model, G=icluster)
+
+        if (is.null(mod$classification)){
+            sil[idx, model] = NA
+            print('na returned')
+        }else{
+            cluster_idx[, idx] = mod$classification
+            sil.out = silhouette(cluster_idx[,idx], x_dist)
+            sil[idx, model] = mean(sil.out[,3])
+        }
+        
+        idx = idx+1
+    }
+    cluster.idx.list = append(cluster.idx.list, list(cluster_idx))
+    
+
+}
+print(sil)
+
+plot_data = melt(sil, id.var = c('num_cluster'), variable.name = 'mod', value.name = 'sil_score')
+ggplot(data=plot_data, aes(x=num_cluster, y=sil_score, group=mod)) +
+  geom_line(aes(linetype=mod, color = mod))+
+  geom_point(aes(shape=mod, color = mod))
+
+```
+
+
+```{r}
+library(cluster)
+library(ggplot2)
+library(reshape2)
+
+max_cluster = 7
+
+#model_list = c('EVE', 'EEE', 'VVV', 'EVV', 'VVI', 'VEI')
+model_list = c("EEE", "EEI", "VEV", "EII")
+
+sil <- data.frame(num_cluster=2:max_cluster)
+cluster.idx.list = list()
+
+x_dist = dist(X)
+for (model in model_list){
+    
+    sil[, model] = rep(NA, max_cluster-1)
+    cluster_idx = matrix(NA, dim(X)[1], max_cluster-1)
+    
+    idx = 1
+    for (icluster in 2:max_cluster) {
+
+        mod <- Mclust(X, modelNames = model, G=icluster)
+
+        if (is.null(mod$classification)){
+            sil[idx, model] = NA
+            print('na returned')
+        }else{
+            cluster_idx[, idx] = mod$classification
+            sil.out = silhouette(cluster_idx[,idx], x_dist)
+            sil[idx, model] = mean(sil.out[,3])
+        }
+        
+        idx = idx+1
+    }
+    cluster.idx.list = append(cluster.idx.list, list(cluster_idx))
+    
+
+}
+print(sil)
+
+plot_data = melt(sil, id.var = c('num_cluster'), variable.name = 'mod', value.name = 'sil_score')
+ggplot(data=plot_data, aes(x=num_cluster, y=sil_score, group=mod)) +
+  geom_line(aes(linetype=mod, color = mod))+
+  geom_point(aes(shape=mod, color = mod))
+
+```
+
+
+```{r}
+set.seed(111)
+LRT <- mclustBootstrapLRT(X, modelName = "EII")
+print(LRT)
+
+plot(LRT)
+
+```
+
+
+```{r}
+
+mod <- Mclust(X, modelNames = "EII", G=4)
+summary(mod, parameters = TRUE)
+plot(mod, what = "classification")
+
+table(mod$classification)
+
+coefs_data[cluster_rows, 'cluster_gmm_eii4'] = mod$classification
+
+
+```
+
+
+```{r}
+mod1dr <- MclustDR(mod)
+summary(mod1dr)
+
+plot(mod1dr, what = "pairs")
+
+```
+
+
+
+```{r}
+
+write.csv(coefs_data, paste0(out_dir, '/out02_coefs_cluster_R_gmm_thresh0.csv'))
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

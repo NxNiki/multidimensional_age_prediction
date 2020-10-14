@@ -1,0 +1,211 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+https://rstudio-pubs-static.s3.amazonaws.com/371683_3294dfdfeece4b3494bb86dbe41be4e3.html#
+
+```{r}
+
+#suppressPackageStartupMessages( require(oetteR) )
+suppressPackageStartupMessages( require(tidyverse) )
+suppressPackageStartupMessages( require(caret) )
+suppressPackageStartupMessages( require(corrplot) )
+suppressPackageStartupMessages( require(recipes) )
+
+```
+
+
+
+
+```{r}
+
+library(mlbench)
+set.seed(1)
+
+df = tibble( data = list(mlbench::mlbench.friedman1( 1000 )
+                         , mlbench::mlbench.friedman2( 1000 )
+                         , mlbench::mlbench.friedman3( 1000 ) 
+                        )
+  ) %>%
+  mutate( x = map(data, 'x')
+          , y = map(data, 'y')
+          , x = map( x, as_tibble )
+          , y = map( y, function(z) tibble(resp = z) )
+          , data = map2( y ,x, bind_cols) 
+          ) %>%
+  mutate( data_name = c('Friedman 1', 'Friedman 2', 'Friedman 3') ) %>%
+  select( data_name, data )
+
+```
+
+
+
+```{r}
+
+set.seed(1)
+
+data = df$data[[1]] 
+
+mods = data %>%
+  filter( resp > max(resp) * 0.9 ) %>%
+  mutate( V4 = V4 * 0.1
+          , V5 = V5 * 0.1
+          , resp = resp * 1.5 )
+  
+
+data_mod = data %>%
+  sample_n(300) %>%
+  bind_rows(mods)
+
+df = df %>%
+  bind_rows( tibble( data = list(data_mod), data_name = 'Friedman 1 - outlier') )
+
+
+
+```
+
+
+```{r}
+
+data = MASS::hills %>%
+  as_tibble()
+
+df = df %>%
+  bind_rows( tibble ( data_name = 'Hill Racing', data = list(data) ) )
+
+```
+
+
+
+```{r}
+
+data = df$data[[1]] %>%
+  mutate( V11 = 1-V4 )
+
+df = df %>%
+  bind_rows( tibble( data = list(data), data_name = 'Friedman 1 - colinear') )
+
+```
+
+
+```{r}
+
+df = df %>%
+  mutate( response = ifelse( startsWith(data_name, 'Fried'), 'resp', 'time') )
+
+```
+
+
+
+```{r}
+
+df_plot = df %>%
+  mutate( p = map2(data, response,  function(data, resp) gather( data, key = 'key', value = 'value', - resp ) ) 
+          #, p  = map2(p, response, function(p, resp)  oetteR::f_plot_pretty_points( p, 'value', as.character(resp),'key', scales = 'free_x') )
+          #, p  = map(p, function(x) x + geom_smooth() + geom_rug() + ggpubr::stat_cor() )
+  )
+
+
+```
+
+
+```{r}
+
+df_plot = df %>%
+  mutate( hist = map(data, gather, key = 'key', value = 'value')
+          , hist = map( hist, f_clean_data_no_changes )
+          , hist = map( hist, function(x) f_plot_hist('value', x , add = 'none')  )
+          , hist = map( hist, function(x) x = x + facet_wrap(~key, scales = 'free') )
+  ) 
+
+
+```
+
+
+```{r}
+
+df = df %>%
+  mutate( formula = map( response, paste, '~ .' )
+          , rec = map2(data, formula, recipe)
+          , rec = map(rec, step_scale, all_predictors() )
+          , rec = map(rec, step_center, all_predictors() )
+          , rec = map2(rec, data, prep)
+          , data  = map2(rec, data, bake) ) %>%
+  select( - formula, - rec )
+
+```
+
+
+```{r}
+
+df_lasso = df %>%
+  mutate(  formula = map( data, names )
+          , formula = map2( formula, response,  function(x,y) x[ x != y] )
+          , formula = map( formula, paste, collapse = '+')
+          , formula = map2( formula, response, function(x,y) paste( y , '~', x) )
+          , formula = map( formula, as.formula )
+          ) %>%
+  mutate( lasso = map2( data, formula, f_train_lasso, k = 10, p = NULL)
+          , lasso_formula = map_chr(lasso, 'formula_str_lambda_1se') 
+          )
+
+```
+
+
+```{r}
+
+df = df %>%
+  mutate( cv = map( data, rsample::vfold_cv, v = 10, repeats = 10)
+          , cv = map( cv, rsample::rsample2caret) )
+
+```
+
+
+```{r}
+
+
+car = function( formula, rsample, method, data, grid){
+  
+  if( is.na(grid) ) grid = NULL
+  
+  car = caret::train( formula
+                      , data = data
+                      , method = method
+                      , tuneGrid = grid
+                      , trControl = caret::trainControl(index = rsample$index
+                                                        , indexOut = rsample$indexOut
+                                                        , method = 'cv'
+                                                        , verboseIter = F
+                                                        , savePredictions = T
+                                                        )
+                        )
+  return( as.tibble(car$pred) )
+}
+
+```
+
+
+```{r}
+
+
+df_rlm = df %>%
+  left_join( select( df_lasso, data_name, lasso_formula ) , by = 'data_name') %>%
+  rename( formula = lasso_formula ) %>%
+  mutate( method = 'rlm'
+          , formula = map( formula, as.formula )
+          , grid = NA
+          , preds = pmap( list(formula, cv, method, data, grid), car ) 
+          ) 
+
+
+```
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

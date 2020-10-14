@@ -1,0 +1,565 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(reshape2)
+library(pls)
+
+rm(list = ls())
+
+
+if (.Platform$OS.type == 'windows'){
+  setwd("C:/Users/Xin/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+  #setwd("C:/Users/niuxi/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+} else{
+  setwd("~/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+}
+
+
+format.pvalue = function(p.values){
+  
+  sig.pos1 = (p.values <= .05) & (p.values)>.01
+  sig.pos2 = (p.values <= .01) & (p.values)>=.001
+  #sig.pos3 = p.values =.001
+  sig.pos3 = p.values <.001
+  
+  p.values.report = as.data.frame(p.values)
+  f = function(x)  sprintf("%0.3f", x)
+  p.values.report = as.data.frame(lapply(p.values, f))
+  
+  f1 = function(x) paste0(sprintf("%0.3f", x), '*')
+  p.values.report[sig.pos1] = as.data.frame(lapply(p.values[sig.pos1], f1))
+  
+  f1 = function(x) paste0(sprintf("%0.3f", x), '**')
+  p.values.report[sig.pos2] = as.data.frame(lapply(p.values[sig.pos2], f1))
+  
+  #f1 = function(x) paste0(sprintf("%0.3f", x), '***')
+  #p.values.report[sig.pos3] = as.data.frame(lapply(p.values[sig.pos3], f1))
+  
+  p.values.report[sig.pos3] = "<.001***"
+  
+  return(p.values.report)
+  
+}
+
+
+scale.0.1 = function(dat) {
+    # the output will be coerced to matrix.
+    
+    dat = as.matrix(dat)
+    
+    mins = apply(dat, 2, min)
+    maxs = apply(dat, 2, max)
+    
+    scaled.dat = scale(dat, center = mins, scale = maxs - mins)
+    return(scaled.dat)
+}
+
+input.dir = 'out04_fit_brain_age'
+#input.dir = 'out04_fit_brain_age_disorder'
+output.dir = 'out05_pls_hc'
+
+if (!file.exists(output.dir)){
+  dir.create(output.dir)
+}
+
+
+# read age prediction and behavioral data:
+scatter_data = read.csv(paste0(input.dir, '/out04_scatter_data_ridge_cluster_km4_fit_brain_age.csv'), row.names = 1)
+
+#scatter_data = read.csv(paste0(input.dir, '/out04_scatter_data_ridge_cluster_km4_fit_brain_age_all.csv'), row.names = 1)
+#scatter_data$index = NULL
+#scatter_data = scatter_data[scatter_data$group == 'HC', ]
+
+scatter_data_wide = reshape(scatter_data, idvar = 'SUBJID', timevar = 'cluster', 
+                            direction = 'wide', 
+                            v.names = c('brain.age', 'age.gap', 'brain.age.fit.intersex', 'age.gap.corr'))
+
+scatter_subid = unique(scatter_data[,'SUBJID'])
+
+behav_data = read.csv('out01_robustreg_behav_hc2_stdz_age_reverse_fa/out01_behav_cog_hc_raw.csv', row.names = 1)
+behav_data$age_at_cnb = NULL
+behav_data$names = NULL
+behav_data = behav_data[behav_data$SUBJID %in% scatter_subid,]
+behav_col = names(behav_data[,-c(1:2)])
+data_merge = merge(scatter_data_wide, behav_data, on = 'SUBJID')
+
+cv.fold = 5
+
+```
+
+```{r}
+
+library(pls)
+# pls regression with behavioral scores to predict brain age:
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+
+# construct X and Y in data_merge:
+#data_merge_y = data_merge[, c('brain.age.1.0','brain.age.2.0','brain.age.3.0','brain.age.4.0')]
+data_merge_y = data_merge[, c('brain.age.cluster 1','brain.age.cluster 2','brain.age.cluster 3','brain.age.cluster 4')]
+
+colnames(data_merge_y) = c('cluster1', 'cluster2', 'cluster3', 'cluster4')
+data_merge_x = data_merge[, c('Sex', behav_col)]
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+# code female as 0 and male as 1:
+data_merge_x$Sex = data_merge_x$Sex=='M'
+data_plsr = data.frame(brain_age = I(as.matrix(data_merge_y)), behav = I(as.matrix(data_merge_x)))
+
+# Fit the model
+set.seed(111)
+mod.brain_age <- plsr(brain_age ~ behav, data  = data_plsr, validation = "CV", segments = cv.fold, jackknife = T)
+#mod.brain_age <- plsr(y = as.matrix(data_merge_y), x = as.matrix(data_merge_x), validation = "CV", segments = 5, jackknife = T)
+
+pls.RMSEP = RMSEP(mod.brain_age, estimate='all')
+plot(pls.RMSEP, legendpos = "topright")
+mean.rmsep = colMeans(pls.RMSEP$val[2,,])
+print(which.min(mean.rmsep))
+
+pls.r2 = R2(mod.brain_age, estimate="all")
+plot(pls.r2, legendpos = "topright")
+mean.r2 = colMeans(pls.r2$val[2,,])
+print(which.max(mean.r2))
+
+```
+
+
+
+```{r}
+
+n.comp = 3
+
+
+#mod.brain_age.cv <- crossval(mod.brain_age, segments = 10)
+#plot(MSEP(mod.brain_age.cv), legendpos="topright")
+
+plot(mod.brain_age, ncomp = n.comp, asp = 1.5, line = TRUE)
+plot(mod.brain_age, plottype = "scores", comps = 1:n.comp)
+plot(mod.brain_age, "loadings", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+plot(mod.brain_age, "coef", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+
+brain_age_loading = mod.brain_age$loadings[, c(1:10)]
+write.csv(brain_age_loading, paste0(output.dir,'/out05_plsr_brain_age_loading.csv'))
+brain_age_coefficients = mod.brain_age$coefficients
+for (i in 1:dim(brain_age_coefficients)[3]){
+write.csv(brain_age_coefficients[,,i], paste0(output.dir,'/out05_plsr_brain_age_coefs_comp', toString(i), '.csv'))
+}
+
+set.seed(222)
+jack.out = jack.test(mod.brain_age, ncomp = n.comp)
+
+coefs = round(as.data.frame(drop(jack.out$coefficients)),3)
+row.names = rownames(coefs)
+f1 = function(x) sprintf("%0.3f", x)
+coefs = as.data.frame(lapply(coefs, f1))
+
+p.values = round(as.data.frame(drop(jack.out$pvalues)),3)
+p.values.report = format.pvalue(p.values)
+
+report = data.frame(coefs = coefs, p = p.values.report)
+report = report[, c(1,5,2,6,3,7,4,8)]
+
+r2.max = pls.r2$val[2,,n.comp]
+f1 = function(x) sprintf("%0.3f", x)
+r2.max = as.data.frame(lapply(r2.max, f1))
+
+report[nrow(report)+1, c(1,3,5,7)] = r2.max
+
+```
+
+
+
+```{r}
+
+library(pls)
+# pls regression with behavioral scores to predict brain age:
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+
+# construct X and Y in data_merge:
+#data_merge_y = data_merge[, c('brain.age.all')]
+data_merge_y = data_merge[, c('brain.age.cluster all')]
+
+data_merge_x = data_merge[, c('Sex', behav_col)]
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+# code female as 0 and male as 1:
+data_merge_x$Sex = data_merge_x$Sex=='M'
+data_plsr = data.frame(brain_age = I(as.matrix(data_merge_y)), behav = I(as.matrix(data_merge_x)))
+# Fit the full model
+
+set.seed(111)
+mod.brain_age_all <- plsr(brain_age ~ behav, data  = data_plsr, validation = "CV", segments = cv.fold, jackknife = T)
+
+
+pls.RMSEP = RMSEP(mod.brain_age_all, estimate='all')
+plot(pls.RMSEP, legendpos = "topright")
+print(which.min(pls.RMSEP$val[2,,]))
+
+pls.r2 = R2(mod.brain_age_all, estimate="all")
+plot(pls.r2, legendpos = "topright")
+print(which.max(pls.r2$val[2,,]))
+
+
+```
+
+
+```{r}
+
+n.comp = 3
+plot(mod.brain_age_all, ncomp = n.comp, asp = 1.5, line = TRUE)
+plot(mod.brain_age_all, plottype = "scores", comps = 1:n.comp)
+plot(mod.brain_age_all, "loadings", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+plot(mod.brain_age_all, "coef", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+brain_age_loading = mod.brain_age_all$loadings[, c(1:10)]
+write.csv(brain_age_loading, paste0(output.dir,'/out05_plsr_brain_age_all_loading.csv'))
+brain_age_coefficients = mod.brain_age_all$coefficients
+for (i in 1:dim(brain_age_coefficients)[3]){
+write.csv(brain_age_coefficients[,,i], paste0(output.dir,'/out05_plsr_brain_age_all_coefs_comp',
+                                              toString(i), '.csv'))
+}
+
+set.seed(222)
+jack.out = jack.test(mod.brain_age_all, ncomp = n.comp)
+
+coefs = round(as.data.frame(drop(jack.out$coefficients)),3)
+f1 = function(x) sprintf("%0.3f", x)
+coefs = as.data.frame(lapply(coefs, f1))
+
+p.values = round(as.data.frame(drop(jack.out$pvalues)),3)
+
+p.values.report = format.pvalue(p.values)
+
+report.cluster_all = data.frame(coefs = coefs, p = p.values.report)
+
+r2.max = pls.r2$val[2,,n.comp]
+f1 = function(x) sprintf("%0.3f", x)
+r2.max = as.data.frame(lapply(r2.max, f1))
+
+report.cluster_all[nrow(report.cluster_all)+1, 1] = r2.max
+
+colnames(report.cluster_all) = c('coefs.brain.age.all', 'p.brain.age.all')
+
+
+```
+```{r}
+
+# pls regression with behavioral scores to predict chronolgical age:
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+# construct X and Y in data_merge:
+data_merge_y = data_merge[, c('chronological.age')]
+data_merge_x = data_merge[, c('Sex', behav_col)]
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+# code female as 0 and male as 1:
+data_merge_x$Sex = data_merge_x$Sex=='M'
+data_plsr = data.frame(brain_age = I(as.matrix(data_merge_y)), behav = I(as.matrix(data_merge_x)))
+
+# Fit the full model
+set.seed(111)
+mod.chro_age <- plsr(brain_age ~ behav, data  = data_plsr, validation = "CV", segments = cv.fold, jackknife = T)
+
+#summary(mod.chro_age)
+
+pls.RMSEP = RMSEP(mod.chro_age, estimate='all')
+plot(pls.RMSEP, legendpos = "topright")
+print(which.min(pls.RMSEP$val[2,,]))
+
+pls.r2 = R2(mod.chro_age, estimate="all")
+plot(pls.r2, legendpos = "topright")
+print(which.max(pls.r2$val[2,,]))
+
+```
+
+
+```{r}
+n.comp = 4
+
+plot(mod.chro_age, ncomp = 3, asp = 1.5, line = TRUE)
+plot(mod.chro_age, plottype = "scores", comps = 1:n.comp)
+plot(mod.chro_age, "loadings", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+plot(mod.chro_age, "coef", comps = 1:n.comp, legendpos = "topleft", labels = "names", xlab = "task")
+
+
+brain_age_loading = mod.chro_age$loadings[, c(1:10)]
+write.csv(brain_age_loading, paste0(output.dir,'/out05_plsr_chro_age_loading.csv'))
+brain_age_coefficients = mod.brain_age_all$coefficients
+for (i in 1:dim(brain_age_coefficients)[3]){
+write.csv(brain_age_coefficients[,,i], paste0(output.dir,'/out05_plsr_chro_age_coefs_comp',
+                                              toString(i), '.csv'))
+}
+
+
+set.seed(222)
+jack.out = jack.test(mod.chro_age, ncomp = n.comp)
+
+coefs = round(as.data.frame(drop(jack.out$coefficients)),3)
+f1 = function(x) sprintf("%0.3f", x)
+coefs = as.data.frame(lapply(coefs, f1))
+
+p.values = round(as.data.frame(drop(jack.out$pvalues)),3)
+p.values.report = format.pvalue(p.values)
+
+report.chro_age = data.frame(coefs = coefs, p = p.values.report)
+
+
+r2.max = pls.r2$val[2,,n.comp]
+f1 = function(x) sprintf("%0.3f", x)
+r2.max = as.data.frame(lapply(r2.max, f1))
+
+report.chro_age[nrow(report.chro_age)+1, 1] = r2.max
+
+colnames(report.chro_age) = c('coefs.chro.age', 'p.chro.age')
+
+
+report.all = cbind(report, report.cluster_all, report.chro_age)
+
+```
+
+
+
+```{r}
+
+report.all2 <- apply(report.all,2,as.character)
+rownames(report.all2) = c(row.names, 'Rsquared')
+write.csv(report.all2, paste0(output.dir,'/out05_plsr_final_report_brain.csv'), row.names = T)
+
+
+```
+
+## BAG as response,with chronological age in predictors.
+if we use corrected bag, no chronological age in preidctors. and the fitting was really bad...
+
+```{r}
+
+# pls regression with behavioral scores to predict brain age gap:
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+# construct X and Y in data_merge:
+
+data_merge_y = data_merge[, c('age.gap.corr.1.0','age.gap.corr.2.0','age.gap.corr.3.0','age.gap.corr.4.0')]
+#data_merge_y = data_merge[, c('age.gap.1.0','age.gap.2.0','age.gap.3.0','age.gap.4.0')]
+
+colnames(data_merge_y) = c('cluster1', 'cluster2', 'cluster3', 'cluster4')
+
+#data_merge_x = data_merge[, c('Sex', 'brain.age.1.0','brain.age.2.0','brain.age.3.0',  behav_col)]
+#data_merge_x = data_merge[, c('Sex', 'chronological.age',  behav_col)]
+data_merge_x = data_merge[, c('Sex', behav_col)]
+
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+# code female as 0 and male as 1:
+data_merge_x$Sex = data_merge_x$Sex=='M'
+data_plsr = data.frame(brain_age = I(as.matrix(data_merge_y)), behav = I(as.matrix(data_merge_x)))
+# Fit the full model
+mod.age_gap <- plsr(brain_age ~ behav, data  = data_plsr, validation = "CV", segments = 5, jackknife = T)
+
+
+pls.RMSEP = RMSEP(mod.age_gap, estimate="all")
+plot(pls.RMSEP, legendpos = "bottomright")
+
+print(which.min(colMeans(pls.RMSEP$val[2,,])))
+
+
+pls.r2 = R2(mod.age_gap, estimate="all")
+plot(pls.r2, legendpos = "bottomright")
+print(which.max(colMeans(pls.r2$val[2,,])))
+
+```
+
+```{r}
+
+
+
+n.comp = 4
+
+plot(mod.age_gap, ncomp = n.comp, asp = 1.5, line = TRUE)
+plot(mod.age_gap, plottype = "scores", comps = 1:n.comp)
+plot(mod.age_gap, "loadings", comps = 1:n.comp, legendpos = "topleft",
+     labels = "names", xlab = "task")
+
+plot(mod.age_gap, "coef", comps = 1:n.comp, legendpos = "topleft",
+     labels = "names", xlab = "task")
+
+age_gap_loading = mod.age_gap$loadings[, c(1:n.comp)]
+write.csv(age_gap_loading, paste0(input.dir, '/out05_plsr_age_gap_loading.csv'))
+
+age_gap_coefficients = mod.age_gap$coefficients
+
+for (i in 1:dim(age_gap_coefficients)[3]){
+    write.csv(age_gap_coefficients[,,i], paste0(input.dir, '/out05_plsr_age_gap_coefs_comp',
+                                                toString(i), '.csv'))
+}
+
+
+jack.out = jack.test(mod.age_gap, ncomp = n.comp)
+
+coefs = round(as.data.frame(drop(jack.out$coefficients)),3)
+row.names = rownames(coefs)
+f1 = function(x) sprintf("%0.3f", x)
+coefs = as.data.frame(lapply(coefs, f1))
+
+p.values = round(as.data.frame(drop(jack.out$pvalues)),3)
+p.values.report = format.pvalue(p.values)
+
+report.bag = data.frame(coefs = coefs, p = p.values.report)
+report.bag = report.bag[, c(1,5,2,6,3,7,4,8)]
+
+r2.max = pls.r2$val[2,,n.comp]
+f1 = function(x) sprintf("%0.3f", x)
+r2.max = as.data.frame(lapply(r2.max, f1))
+
+report.bag[nrow(report.bag)+1, c(1,3,5,7)] = r2.max
+
+```
+```{r}
+
+# pls regression with behavioral scores to predict brain age gap:
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+# construct X and Y in data_merge:
+data_merge_y = data_merge[, c('age.gap.all'), drop = F]
+colnames(data_merge_y) = 'cluster.all'
+
+data_merge_x = data_merge[, c('Sex', 'chronological.age',  behav_col)]
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+# code female as 0 and male as 1:
+data_merge_x$Sex = data_merge_x$Sex=='M'
+data_plsr = data.frame(brain_age = I(as.matrix(data_merge_y)), behav = I(as.matrix(data_merge_x)))
+# Fit the full model
+mod.age_gap_all <- plsr(brain_age ~ behav, data  = data_plsr, validation = "CV", segments = 5, jackknife = T)
+
+pls.RMSEP = RMSEP(mod.age_gap_all, estimate="all")
+plot(pls.RMSEP, legendpos = "bottomright")
+
+print(which.min(pls.RMSEP$val[2,,]))
+
+
+pls.r2 = R2(mod.age_gap_all, estimate="all")
+plot(pls.r2, legendpos = "bottomright")
+print(which.max(pls.r2$val[2,,]))
+
+```
+
+```{r}
+
+
+n.comp = 3
+
+
+plot(mod.age_gap_all, ncomp = n.comp, asp = 1.5, line = TRUE)
+plot(mod.age_gap_all, plottype = "scores", comps = 1:n.comp)
+plot(mod.age_gap_all, "loadings", comps = 1:n.comp, legendpos = "topleft",
+     labels = "names", xlab = "task")
+
+plot(mod.age_gap_all, "coef", comps = 1:n.comp, legendpos = "topleft",
+     labels = "names", xlab = "task")
+
+age_gap_loading = mod.age_gap_all$loadings[, c(1:n.comp)]
+write.csv(age_gap_loading, paste0(input.dir, '/out05_plsr_age_gap_loading.csv'))
+
+age_gap_coefficients = mod.age_gap_all$coefficients
+
+for (i in 1:dim(age_gap_coefficients)[3]){
+    write.csv(age_gap_coefficients[,,i], paste0(input.dir, '/out05_plsr_age_gap_coefs_comp',
+                                                toString(i), '.csv'))
+}
+
+jack.out = jack.test(mod.age_gap_all, ncomp = n.comp)
+
+coefs = round(as.data.frame(drop(jack.out$coefficients)),3)
+row.names = rownames(coefs)
+f1 = function(x) sprintf("%0.3f", x)
+coefs = as.data.frame(lapply(coefs, f1))
+
+p.values = round(as.data.frame(drop(jack.out$pvalues)),3)
+p.values.report = format.pvalue(p.values)
+
+report.bag.all = data.frame(coefs = coefs, p = p.values.report)
+
+r2.max = pls.r2$val[2,,n.comp]
+f1 = function(x) sprintf("%0.3f", x)
+r2.max = as.data.frame(lapply(r2.max, f1))
+
+report.bag.all[nrow(report.bag.all)+1, 1] = r2.max
+
+colnames(report.bag.all) = c('coefs.bag.all', 'p.bag.all')
+
+```
+```{r}
+
+
+report.all = cbind(report.bag, report.bag.all)
+report.all2 <- apply(report.all,2,as.character)
+rownames(report.all2) = c(row.names, 'Rsquared')
+write.csv(report.all2, paste0(input.dir,'/out05_plsr_final_report_bag.csv'), row.names = T)
+
+
+```
+# comparing the prediction performance (Rsquared) of plsr on clustered brain age, uni-brain age and chronological brain age
+# using cross validation:
+
+```{r}
+library(caret)
+
+data_merge$SUBJID = NULL
+data_merge = data_merge[complete.cases(data_merge), ]
+# construct X and Y in data_merge:
+data_merge_x = data_merge[, c('Sex', behav_col)]
+binary.col = which(colnames(data_merge_x)=='Sex')
+data_merge_x[, -binary.col] = scale.0.1(data_merge_x[, -binary.col])
+data_merge_x$Sex = data_merge_x$Sex=='M'
+
+chro_age = scale(data_merge[, c('chronological.age')])
+
+#data_merge_y = scale(data_merge[, c('chronological.age')])
+#data_merge_y = scale(data_merge[, c('brain.age.all')])
+
+#data_merge_y = data_merge[, c('brain.age.1.0','brain.age.2.0','brain.age.3.0','brain.age.4.0')]
+#data_merge_y = data_merge[, c('age.gap.corr.1.0','age.gap.corr.2.0','age.gap.corr.3.0','age.gap.corr.4.0')]
+data_merge_y = data_merge[, c('age.gap.1.0','age.gap.2.0','age.gap.3.0','age.gap.4.0')]
+colnames(data_merge_y) = c('cluster1', 'cluster2', 'cluster3', 'cluster4')
+
+chro_age_pred = data_merge_y*NaN
+data_plsr = data.frame(y = I(as.matrix(data_merge_y)), X = I(as.matrix(data_merge_x)))
+
+set.seed(111)
+cv.k = createFolds(chro_age, k=5, list = F)
+
+for (i in 1:5){
+  
+  
+  data_plsr_train = data_plsr[cv.k!=i, ]
+  data_plsr_test = data_plsr[cv.k==i, ]
+  
+  mod <- plsr(y ~ X, data  = data_plsr_train, validation = "CV", ncomp = 5)
+  
+  y_pred = predict(mod, data_plsr_test)
+  y_pred = drop(y_pred)
+  chro_age_pred[cv.k==i,] = y_pred[,3,]
+  
+  
+}
+
+
+cor(data_merge_y, chro_age_pred)
+
+
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
