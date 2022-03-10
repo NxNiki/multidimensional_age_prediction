@@ -13,6 +13,65 @@ This is an R Markdown document. Markdown is a simple formatting syntax for autho
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
+
+## permutation mix anova with DV: BAG, IV cluster and group (hc vs disorder):
+
+```{r}
+
+library(permuco)
+
+input_dir = "out04_fit_brain_age_disorder"
+scatter_dat = read.csv(paste0(input_dir, "/out04_scatter_data.csv"))
+
+dis_group = c("Specific Phobia", "Social Phobia", "Depression","PTSD", "ODD", "ADHD")
+
+
+# prepare result table:
+result = data.frame(group = dis_group, p.group = rep(NA, 6,1), p.cluster = rep(NA, 6,1), p.interaction = rep(NA, 6,1))
+
+i=1
+for (i_dis in dis_group){
+  
+  dat_sub = scatter_dat[scatter_dat$group2 %in% c('HC', i_dis),]
+  dat_sub = dat_sub[dat_sub$cluster2!='cluster all',]
+  age.gap.aov <- with(dat_sub, aov(BAG ~ cluster2 * group2 + Error(SUBJID / (cluster2))))
+  
+  print(i_dis)
+  print(summary(age.gap.aov))
+  
+  smry = unlist(summary(age.gap.aov))
+  result[i, 2:4] = smry[c('Error: Within.Pr(>F)2', 'Error: Within.Pr(>F)1', 'Error: Within.Pr(>F)3')]
+  i=i+1
+}
+
+result
+
+
+```
+# multiple correction for the p values:
+```{r}
+
+result.fdr = result
+
+for (i in 2:4){
+  
+  p = result[,i]
+  p.corr = p.adjust(p, method = 'BH', n = length(p))
+  result.fdr[, i] = p.corr
+}
+
+result.fdr
+
+# add stars to p value:
+
+
+
+
+```
+
+
+# the below are old analysis with 3 clusters...
+
 ```{r}
 
 input_dir = "out03_age_prediction_stdz_age"

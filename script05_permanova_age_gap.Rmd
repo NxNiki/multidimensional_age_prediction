@@ -1,0 +1,123 @@
+---
+title: "script05_permanova_age_gap"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## permutation mix anova with DV: BAG, IV cluster and group (hc vs disorder):
+
+```{r}
+
+library(permuco)
+library(reshape2)
+library(vegan)
+
+input_dir = "out04_fit_brain_age_disorder"
+scatter_dat = read.csv(paste0(input_dir, "/out04_scatter_data.csv"))
+
+dis_group = c("Specific Phobia", "Social Phobia", "Depression","PTSD", "ODD", "ADHD")
+
+
+# prepare result table:
+result = data.frame(group = dis_group, p.group = rep(NA, 6,1), 
+                    p.cluster = rep(NA, 6,1), p.interaction = rep(NA, 6,1))
+
+result.manova = data.frame(group = dis_group, p.manova = rep(NA, 6,1), 
+                           p.anova = rep(NA, 6,1))
+
+i=1
+for (i_dis in dis_group){
+  
+  dat_sub_all = scatter_dat[scatter_dat$group2 %in% c('HC', i_dis),]
+  dat_sub = dat_sub_all[dat_sub_all$cluster2!='cluster all',]
+  
+  #print(unique(dat_sub$cluster2))
+  
+  set.seed(111)
+  age.gap.aov <- aovperm(BAG ~ cluster2 * group2 + Error(SUBJID / (cluster2)), data = dat_sub)
+  print(i_dis)
+  print(summary(age.gap.aov))
+  
+  smry = unlist(summary(age.gap.aov))
+  result[i, 2:4] = smry[c('permutation P(>F)1', 'permutation P(>F)2', 'permutation P(>F)3')]
+  
+  # MANOVA:
+  dat_sub_wide = dcast(dat_sub_all, SUBJID + group2 ~ cluster2, value.var="BAG")
+  dat_dv = dat_sub_wide[,c('cluster 1', 'cluster 2', 'cluster 3', 'cluster 4')]
+  set.seed(111)
+  manov = adonis(dat_dv ~ group2, data = dat_sub_wide, method = "bray", permutations = 5000)
+  print(manov)
+  result.manova[i,2] = manov$aov.tab$`Pr(>F)`[1]
+  
+  #ANOVA:
+  dat_all.aov = dat_sub_wide[,c('cluster all', 'group2')]
+  set.seed(111)
+  aov.all = aovperm(`cluster all` ~ group2, data = dat_all.aov) 
+  print(aov.all)
+  result.manova[i,3] = aov.all$table$`permutation P(>F)`[1]
+  
+  i=i+1
+}
+
+print(result)
+
+print(result.manova)
+
+
+```
+# multiple correction for the p values:
+```{r}
+
+result.fdr = result
+
+for (i in 2:4){
+  
+  p = result[,i]
+  p.corr = p.adjust(p, method = 'BH', n = length(p))
+  result.fdr[, i] = p.corr
+}
+
+
+
+# add stars to p value:
+
+format.pvalue = function(p.values){
+  
+  sig.pos1 = (p.values <= .05) & (p.values)>.01
+  sig.pos2 = (p.values <= .01) & (p.values)>=.001
+  #sig.pos3 = p.values =.001
+  sig.pos3 = p.values <.001
+  
+  p.values.report = as.data.frame(p.values)
+  f = function(x)  sprintf("%0.3f", x)
+  p.values.report = as.data.frame(lapply(p.values, f))
+  
+  f1 = function(x) paste0(sprintf("%0.3f", x), '*')
+  p.values.report[sig.pos1] = as.data.frame(lapply(p.values[sig.pos1], f1))
+  
+  f1 = function(x) paste0(sprintf("%0.3f", x), '**')
+  p.values.report[sig.pos2] = as.data.frame(lapply(p.values[sig.pos2], f1))
+  
+  #f1 = function(x) paste0(sprintf("%0.3f", x), '***')
+  #p.values.report[sig.pos3] = as.data.frame(lapply(p.values[sig.pos3], f1))
+  
+  p.values.report[sig.pos3] = "<.001***"
+  
+  p.values.report <- apply(p.values.report,2,as.character)
+  
+  return(p.values.report)
+  
+}
+
+result.fdr[,2:4] = format.pvalue(result.fdr[,2:4])
+
+result.fdr
+
+write.csv(result.fdr, paste0(input_dir, '/out05_anova_result_fdr.csv'))
+
+```
+

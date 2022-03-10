@@ -1,5 +1,5 @@
 ---
-title: "script_02_gmm_cluster"
+title: "script_02_cluster"
 output: html_document
 ---
 
@@ -20,13 +20,15 @@ library(mclust)
 library(ggplot2)
 library(reshape2)
 
+# udpates on 5/27/2021:
+# remove FA features with tract atlas as they may overlap those with label features.
+# increase the threshold of R2 so that we don't have features not changes with age.
+
 
 input_dir = "out01_robustreg_behav_hc2_stdz_age_reverse_fa"
-out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_thresh0.02"
-#out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_thresh0"
+out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_notract_scale_thresh.05"
+out_filename = 'out02_coefs_cluster_R_withintercept'
 
-#input_dir = "out01_robustreg_behav_hc2_stdz_age_reverse_fa_allsubjects"
-#out_dir = "out02_robustreg_behav_hc2_stdz_age_reverse_fa_scale_allsubjects_thresh0.02"
 
 dir.create(file.path(out_dir), showWarnings = FALSE)
 
@@ -34,9 +36,15 @@ dir.create(file.path(out_dir), showWarnings = FALSE)
 #coefs_data = read.csv(paste0(input_dir, '/out01_behav_feature_beta_ransac_lr.csv'), header = T)
 
 # huber regression:
-coefs_data = read.csv(paste0(input_dir, '/out01_huber_coefs_M.csv'), header = T)
-coefs_data$modality = c(rep("gmv", 116), rep('FA', 70))
+coefs_data = read.csv(paste0(input_dir, '/out01_huber_coefs_M_new.csv'), header = T)
 
+#coefs_data$modality = c(rep("gmv", 116), rep('FA', 70))
+# remove tract fa features, except for the several that are not highly correlated (r<.8) to label fa features.
+#tract_idx = c(14,18,19,20)+166
+tract_idx = c()
+
+coefs_data = coefs_data[c(1:166, tract_idx), ]
+coefs_data$modality = c(rep("gmv", 116), rep('FA', 50+length(tract_idx)))
 
 colnames(coefs_data) = c('feature', 'intercept', 'age', 'age2', 'sex', 'sex.age', 'sex.age2', 'Rsquare', 'modality')
 
@@ -44,7 +52,9 @@ colnames(coefs_data) = c('feature', 'intercept', 'age', 'age2', 'sex', 'sex.age'
 #coefs_data_raw = coefs_data
 #coefs_data[,c('age','age..2.')] = abs(coefs_data[c('age','age..2.')])
 
-rsquare_thresh = 0.02
+rsquare_thresh = 0.05
+#rsquare_thresh = -1
+
 coefs_data[coefs_data[, 'Rsquare']<rsquare_thresh, 'rsquare_thresh'] = F
 coefs_data[coefs_data[, 'Rsquare']>=rsquare_thresh, 'rsquare_thresh'] = T
 
@@ -53,7 +63,6 @@ coefs_data[coefs_data[, 'Rsquare']>=rsquare_thresh, 'rsquare_thresh'] = T
 #out_filename = 'out02_coefs_cluster_R_km'
 
 columns = c('intercept', 'age', 'sex', 'age2', 'sex.age', 'sex.age2')
-out_filename = 'out02_coefs_cluster_R_km_withintercept'
 
 #cluster_rows = (coefs_data[,'rsquare_thresh']==T) & (coefs_data[,'modality']!='behav')
 cluster_rows = coefs_data[,'rsquare_thresh']==T
@@ -141,12 +150,22 @@ fviz_gap_stat(gap_stat)
 
 
 ```{r}
+km <- kmeans(X, 3, iter.max = 1000, nstart = 100)
+fviz_cluster(km, data = X)
+
+
+coefs_data[cluster_rows, 'cluster_km3'] = km$cluster
+```
+
+
+```{r}
 km <- kmeans(X, 4, iter.max = 1000, nstart = 100)
 fviz_cluster(km, data = X)
 
 
 coefs_data[cluster_rows, 'cluster_km4'] = km$cluster
 ```
+
 ```{r}
 km <- kmeans(X, 5, iter.max = 1000, nstart = 100)
 fviz_cluster(km, data = X)
@@ -163,6 +182,82 @@ fviz_cluster(km, data = X)
 coefs_data[cluster_rows, 'cluster_km3'] = km$cluster
 ```
 
+```{r}
+
+#BIC <- mclustBIC(X)
+
+BIC <- mclustBIC(X, modelNames = c("EVE", "EEE", "VVV", "EVV", "EEI", "VEI", "EVI", "VVI", "EEV", "VEV", "EII"))
+#BIC <- mclustBIC(X)
+plot(BIC)
+summary(BIC)
+
+```
+
+
+```{r}
+library(cluster)
+library(ggplot2)
+library(reshape2)
+
+max_cluster = 7
+
+model_list = c( "VVV", "EEI", "EVI", "VVI", "VEV", "EII","EEE")
+#model_list = c("EVE", "EEE", "VVV", "EVV", "EEI", "VEI", "EVI", "VVI", "EEV", "VEV", "EII")
+
+sil <- data.frame(num_cluster=2:max_cluster)
+cluster.idx.list = list()
+
+x_dist = dist(X)
+for (model in model_list){
+    
+    sil[, model] = rep(NA, max_cluster-1)
+    cluster_idx = matrix(NA, dim(X)[1], max_cluster-1)
+    
+    idx = 1
+    for (icluster in 2:max_cluster) {
+
+        mod <- Mclust(X, modelNames = model, G=icluster)
+
+        if (is.null(mod$classification)){
+            sil[idx, model] = NA
+            print('na returned')
+        }else{
+            cluster_idx[, idx] = mod$classification
+            sil.out = silhouette(cluster_idx[,idx], x_dist)
+            sil[idx, model] = mean(sil.out[,3])
+        }
+        
+        idx = idx+1
+    }
+    cluster.idx.list = append(cluster.idx.list, list(cluster_idx))
+    
+
+}
+print(sil)
+
+plot_data = melt(sil, id.var = c('num_cluster'), variable.name = 'mod', value.name = 'sil_score')
+ggplot(data=plot_data, aes(x=num_cluster, y=sil_score, group=mod)) +
+  geom_line(aes(linetype=mod, color = mod))+
+  geom_point(aes(shape=mod, color = mod))
+
+```
+
+```{r}
+model = 'EEE'
+ncluster = 4
+
+cluster_label = paste0('cluster_gmm', model, toString(ncluster))
+
+mod <- Mclust(X, modelNames = model, G=ncluster)
+summary(mod, parameters = TRUE)
+plot(mod, what = "classification")
+
+table(mod$classification)
+
+coefs_data[cluster_rows, cluster_label] = mod$classification
+
+```
+
 
 ```{r}
 
@@ -173,6 +268,7 @@ coefs_data[coefs_data$modality=='gmv', 'idx'] = 1:sum(coefs_data$modality=='gmv'
 coefs_data[coefs_data$modality=='FA', 'idx'] = 1:sum(coefs_data$modality=='FA')
 
 coefs_data = coefs_data[!is.na(coefs_data$cluster_gmm_km4), ]
+
 for (i in 1:4){
   
   coefs_data_gmv = coefs_data[coefs_data$modality == 'gmv'&coefs_data$cluster_km4==i, c('idx', 'age', 'age2', 'sex.age', 'sex.age2')]
