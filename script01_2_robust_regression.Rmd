@@ -1,0 +1,174 @@
+---
+title: "script01_2_robust_regression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+```{r}
+rm(list=ls())
+
+
+setwd("C:/Users/Xin/OneDrive - Drexel University/BrainImaging_ML/multidimensional_age_prediction")
+#setwd("C:/Users/niuxi/Dropbox/BrainImaging_ML/multidimensional_age_prediction")
+
+input_dir = 'out01_robustreg_behav_hc2_stdz_age_reverse_fa'
+
+# fa features have been reveresed in the python codes.
+multimodal.features.raw = read.csv(paste0(input_dir, '/out01_behav_feature_hc.csv'))
+
+
+## 05/28/2021:
+# select 2/3 of data as training data to run huber regression.
+# index of training data is prepared in previous python code.
+multimodal.features.train = multimodal.features.raw[multimodal.features.raw$Train_index=='True', ]
+
+multimodal.features = multimodal.features.train[, -c(1,2)]
+
+
+```
+
+
+```{r}
+# check correlation of FA features of tract and label atlas:
+cor.threshold = .8
+fa.features = multimodal.features.raw[, 122:dim(multimodal.features.raw)[2]]
+
+fa.cor = cor(fa.features)
+fa.label.cor = fa.cor[1:50, 1:50]
+
+min(fa.label.cor)
+max(fa.label.cor[row(fa.label.cor)>col(fa.label.cor)])
+
+hist(fa.label.cor[row(fa.label.cor)>col(fa.label.cor)])
+
+fa.tract.cor = fa.cor[51:70, 1:50]
+max(fa.tract.cor)
+hist(fa.cor[51:70, 1:50])
+
+# index of tract features correlated with label features:
+tract.index = apply(fa.tract.cor>=cor.threshold, 1, any)
+heatmap(fa.tract.cor[tract.index, ])
+print(dim(fa.tract.cor[tract.index,]))
+print(which(!tract.index))
+
+# only the last 2 tract features survive a threshold of .6.
+# we will add these two tract features in later cluster analysis.
+
+```
+
+
+```{r}
+
+rsquared = function (actual, preds){
+  
+  rss <- sum((preds - actual) ^ 2)  ## residual sum of squares
+  tss <- sum((actual - mean(actual)) ^ 2)  ## total sum of squares
+  rsq <- 1 - rss/tss
+  
+  return(rsq)
+  
+}
+
+#
+#library(tydiverse)
+#
+#df_features = tibble(multimodal.features)
+#
+#df_rlm = df_features %>%
+#  rename( formula = lasso_formula ) %>%
+#  mutate( method = 'rlm'
+#          , formula = map( formula, as.formula )
+#          , grid = NA
+#          , preds = pmap( list(formula, cv, method, data, grid), car ) 
+#          ) 
+#
+#
+#
+
+```
+
+
+## set different seeds to tune paramter for huber regression for each feature, then apply parameter on all the data and extract coefficients:
+
+
+```{r}
+library(MASS)
+
+
+#k_list = c(seq(1, 5, .1), 1.345) # 1.345 is the default k value. 
+k_list = seq(.1, 5, length.out = 50)
+num_iter = 100
+num_features = dim(multimodal.features)[2]-3
+
+huber_coefs = as.data.frame(matrix(NA, num_features, 8))
+huber_coefs[,1] = colnames(multimodal.features[-(1:3)])
+
+
+age = multimodal.features$age_at_cnb
+sex = multimodal.features$Sex
+
+
+for (i_feature in 1: num_features){
+  print(i_feature)
+  
+  feature = multimodal.features[,i_feature+3]
+  
+  data = as.data.frame(cbind(feature, age, age^2, sex, sex*age, sex*age^2))
+
+  
+  rsq_list = matrix(NA, num_iter, length(k_list))
+  
+  #for (i in 1:num_iter){
+  #
+  #  # split the data into train and test set to examine the MAE of regression:
+  #  #set.seed(111)
+  #  set.seed(i)
+  #  #cv.k = createFolds(y, k, list = F)
+  #  train_index <- sample(1:nrow(multimodal.features), 0.6 * nrow(multimodal.features))
+  #  test_index <- setdiff(1:nrow(multimodal.features), train_index)
+  #  
+  #  data_train = data[train_index,]
+  #  data_test = data[test_index,]
+  #  y_test = data[test_index, 1]
+  #    
+  #  for (ik in 1:length(k_list)){
+  #    
+  #    rr.huber = rlm(feature ~ ., data = data_train, init="ls", psi = psi.huber, k=k_list[ik], method = "M", maxit=2000)
+  #    y_pred = predict(rr.huber, data_test)
+  #  
+  #    #MAE = mean(abs(y_test - y_pred))
+  #    #prediction_result[i_feature, ik+1] = MAE
+  #    
+  #    rsq = rsquared(y_test, y_pred)
+  #    rsq_list[i, ik] = rsq
+  #  
+  #  }
+  #  
+  #  
+  #}
+  
+  #best_k = k_list[which.max(colMeans(rsq_list))]
+  #print(best_k)
+  
+  best_k = 1.5  
+  rr.huber = rlm(feature ~ ., data = data, init="ls", psi = psi.huber, k=best_k, method = "M", maxit=2000)
+  y_pred = predict(rr.huber, data)
+      
+  rsq = rsquared(data[,1], y_pred)
+  huber_coefs[i_feature, -1] = c( rr.huber$coefficients, rsq)
+
+}
+
+
+colnames(huber_coefs) = c('feature', 'intercept', 'age', 'age2', 'sex', 'sex*age', 'sex*age2', 'rsq')
+write.csv(huber_coefs, paste0(input_dir, '/out01_huber_coefs_M_new.csv'), row.names = F)
+
+
+```
+
